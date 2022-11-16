@@ -209,7 +209,7 @@ class TestDataPipeRemoteIO(expecttest.TestCase):
     @skipIfNoFSSpecS3
     def test_fsspec_io_iterdatapipe(self):
         input_list = [
-            (["s3://ai2-public-datasets"], 39),  # bucket without '/'
+            (["s3://ai2-public-datasets"], 40),  # bucket without '/'
             (["s3://ai2-public-datasets/charades/"], 18),  # bucket with '/'
             (
                 [
