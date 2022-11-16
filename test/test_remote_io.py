@@ -183,8 +183,8 @@ class TestDataPipeRemoteIO(expecttest.TestCase):
 
         # S3FileLister: different inputs
         input_list = [
-            [["s3://ai2-public-datasets"], 77],  # bucket without '/'
-            [["s3://ai2-public-datasets/"], 77],  # bucket with '/'
+            [["s3://ai2-public-datasets"], 78],  # bucket without '/'
+            [["s3://ai2-public-datasets/"], 78],  # bucket with '/'
             [["s3://ai2-public-datasets/charades"], 18],  # folder without '/'
             [["s3://ai2-public-datasets/charades/"], 18],  # folder without '/'
             [["s3://ai2-public-datasets/charad"], 18],  # prefix
