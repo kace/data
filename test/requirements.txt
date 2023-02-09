@@ -7,3 +7,4 @@ numpy
 rarfile
 protobuf < 4
 datasets
+awscli>=1.27.66
