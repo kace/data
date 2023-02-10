@@ -5,9 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 
 
-from torchdata.dataloader2.dataloader2 import DataLoader2, DataLoader2Iterator
-from torchdata.dataloader2.error import PauseIteration
-from torchdata.dataloader2.reading_service import (
+from .dataloader2 import DataLoader2, DataLoader2Iterator
+from .error import PauseIteration
+from .reading_service import (
     CheckpointableReadingServiceInterface,
     DistributedReadingService,
     MultiProcessingReadingService,

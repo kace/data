@@ -40,7 +40,6 @@ Features described in this documentation are classified by release status:
    torchdata.datapipes.map.rst
    torchdata.datapipes.utils.rst
    dataloader2.rst
-   reading_service.rst
 
 .. toctree::
    :maxdepth: 2

@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import expecttest
 
+import torchdata
+
 from _utils._common_utils_for_test import check_hash_fn, create_temp_dir, IS_M1, IS_WINDOWS
 from torch.utils.data import DataLoader
 from torchdata.datapipes.iter import (

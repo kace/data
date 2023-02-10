@@ -8,18 +8,20 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, Iterable, Iterator, Optional, TypeVar, Union
 
-from torchdata.dataloader2.adapter import Adapter
-from torchdata.dataloader2.error import PauseIteration
-from torchdata.dataloader2.graph._serialization import (
-    clone,
-    DataPipe,
-    deserialize_datapipe,
-    serialize_datapipe,
-    wrap_datapipe_for_serialization,
+from torch.utils.data.datapipes.datapipe import (
+    _DataPipeSerializationWrapper,
+    _IterDataPipeSerializationWrapper,
+    _MapDataPipeSerializationWrapper,
 )
-from torchdata.dataloader2.random import SeedGenerator
-from torchdata.dataloader2.random.seed_generator import _UINT64_UPPER_BOUND
-from torchdata.dataloader2.reading_service import CheckpointableReadingServiceInterface, ReadingServiceInterface
+
+from torch.utils.data.graph import DataPipe
+from torchdata.dataloader2.adapter import Adapter
+
+from torchdata.datapipes.iter import IterDataPipe
+from torchdata.datapipes.map import MapDataPipe
+
+from .error import PauseIteration
+from .reading_service import CheckpointableReadingServiceInterface, ReadingServiceInterface
 
 T_co = TypeVar("T_co", covariant=True)
 SERIALIZED_DATAPIPE_KEY_NAME = "serialized_datapipe"
@@ -35,14 +37,6 @@ class ConcurrencySpec:
 
 
 class DataLoader2Iterator(Iterator[T_co]):
-    r"""
-    An iterator wrapper returned by ``DataLoader2``'s ``__iter__` method. It delegates method/attribute calls
-    to the DataPipe iterator object.
-
-    The purpose of this wrapper object is to track the validity of an iterator to enforce the single iterator per
-    ``DataLoader2`` constraint, and to finalize iteration/shutdown when necessary.
-    """
-
     def __init__(self, dataloader: "DataLoader2", iterator_id: int):
         self.dataloader = dataloader
         self.iterator_id = iterator_id
@@ -87,22 +81,19 @@ class DataLoader2(Generic[T_co]):
     ``DataLoader2`` is used to optimize and execute the given ``DataPipe`` graph
     based on ``ReadingService`` and ``Adapter`` functions, with support for
 
-    - Dynamic sharding for multiprocess and distributed data loading
+    - Dynamic sharding for multi-process and distributed data loading
     - Multiple backend ``ReadingServices``
     - ``DataPipe`` graph in-place modification like shuffle control, memory pinning, etc.
     - Snapshot the state of data-preprocessing pipeline (WIP)
 
     Args:
-        datapipe (``IterDataPipe`` or ``MapDataPipe``): ``DataPipe`` from which to load the data. A deepcopy of this
-            datapipe will be made during initialization, allowing the input to be re-used in a different ``DataLoader2``
-            without sharing states. Input ``None`` can only be used if ``load_state_dict`` is called
-            right after the creation of the DataLoader.
-        datapipe_adapter_fn (``Iterable[Adapter]`` or ``Adapter``, optional): ``Adapter`` function(s) that
-            will be applied to the DataPipe (default: ``None``).
+        datapipe (``IterDataPipe`` or ``MapDataPipe``): ``DataPipe`` from which to load the data. A deepcopy of this will be made during
+            initialization, allowing the input to be re-used in a different ``DataLoader2`` without sharing states.
+        datapipe_adapter_fn (``Iterable[Adapter]`` or ``Adapter``, optional): ``Adapter`` function(s) that will be applied
+            to the DataPipe (default: ``None``).
         reading_service (ReadingServiceInterface, optional): defines how ``DataLoader2`` should execute operations over
-            the ``DataPipe``, e.g. multiprocessing/distributed (default: ``None``). A deepcopy of this will be
-            created during initialization, allowing the ReadingService to be re-used in a different
-            ``DataLoader2`` without sharing states.
+            the ``DataPipe``, e.g. multiprocessing/distributed (default: ``None``). A deepcopy of this will be made during
+            initialization, allowing the input to be re-used in a different ``DataLoader2`` without sharing states.
     """
 
     def __init__(
@@ -111,7 +102,7 @@ class DataLoader2(Generic[T_co]):
         datapipe_adapter_fn: Optional[Union[Iterable[Adapter], Adapter]] = None,
         reading_service: Optional[ReadingServiceInterface] = None,
     ) -> None:
-        self.datapipe = clone(wrap_datapipe_for_serialization(datapipe)) if datapipe is not None else None
+        self.datapipe = self._wrap_and_copy_dp(datapipe)
         self._adapted: bool = False
         self._datapipe_iter: Optional[Iterator[T_co]] = None
         self._reset_iter: bool = True  # Sets to `False` when __iter__ starts, and `True` when `StopIteration``
@@ -130,10 +121,7 @@ class DataLoader2(Generic[T_co]):
         if self.datapipe is not None and self.datapipe_adapter_fns is not None:
             for adapter_fn in self.datapipe_adapter_fns:
                 self.datapipe = adapter_fn(self.datapipe)
-        self._datapipe_before_reading_service_adapt: DataPipe = clone(self.datapipe)
-        self._seed_generator: SeedGenerator = SeedGenerator()
-        self._seed: Optional[int] = None
-        self._reset_seed: bool = True
+        self._datapipe_before_reading_service_adapt: DataPipe = self._copy(self.datapipe)
 
     def __iter__(self) -> DataLoader2Iterator[T_co]:
         r"""
@@ -142,9 +130,6 @@ class DataLoader2(Generic[T_co]):
         ``DataLoader2``. And, ``initialize_iteration`` and ``finalize_iterator`` will be
         invoked at the beginning and end of the iteration correspondingly.
         """
-        if self.datapipe is None:
-            raise RuntimeError("Please provide datapipe or use load_state_dict to load datapipe from state")
-
         if self._terminated:
             raise RuntimeError("Cannot iterate over the DataLoader as it has already been shut down")
 
@@ -191,22 +176,41 @@ class DataLoader2(Generic[T_co]):
     def __del__(self) -> None:
         self.shutdown()
 
+    @staticmethod
+    def _copy(obj):
+        r"""
+        Standardized way for DataLoader2 to copy an object when needed, such as for DataPipe/ReadingService.
+        This uses `pickle` to serialize/deserialize to create the copy.
+        """
+        return pickle.loads(pickle.dumps(obj))
+
+    @staticmethod
+    def _wrap_and_copy_dp(datapipe: DataPipe):
+        r"""
+        Wraps the ``DataPipe`` with the corresponding serialization wrapper.
+        Then, creates a copy with the class's static copy method.
+
+        """
+        wrapped_dp: DataPipe = datapipe
+        if not isinstance(datapipe, _DataPipeSerializationWrapper):
+            if isinstance(datapipe, IterDataPipe):
+                wrapped_dp = _IterDataPipeSerializationWrapper(datapipe)
+            elif isinstance(datapipe, MapDataPipe):
+                wrapped_dp = _MapDataPipeSerializationWrapper(datapipe)
+        return DataLoader2._copy(wrapped_dp)
+
     def shutdown(self) -> None:
         r"""
         Shuts down ``ReadingService`` and clean up iterator.
         """
-        try:
-            if not self._reset_iter:
-                self._reset_iter = True
-                self._datapipe_iter = None
-            if not self._terminated:
-                if self.reading_service is not None:
-                    self.reading_service.finalize_iteration()
-                    self.reading_service.finalize()
-                self._terminated = True
-        # Ignore AttributeError in case any attribute has been removed before `__del__`
-        except AttributeError:
-            pass
+        if not self._reset_iter:
+            self._reset_iter = True
+            self._datapipe_iter = None
+        if not self._terminated:
+            if self.reading_service is not None:
+                self.reading_service.finalize_iteration()
+                self.reading_service.finalize()
+            self._terminated = True
 
     def __enter__(self) -> "DataLoader2[T_co]":
         return self
@@ -254,7 +258,7 @@ class DataLoader2(Generic[T_co]):
         data_loader.reading_service_state = reading_service_state
         return data_loader
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state: Dict[str, Any]) -> None:
         """
         For the existing ``DataLoader2``, load serialized state to restore ``DataPipe`` graph
         and reset the internal state of ``ReadingService``.
@@ -282,4 +286,4 @@ class DataLoader2(Generic[T_co]):
         if self.datapipe_adapter_fns is not None:
             for adapter_fn in self.datapipe_adapter_fns:
                 self.datapipe = adapter_fn(self.datapipe)
-        self._datapipe_before_reading_service_adapt = clone(self.datapipe)
+        self._datapipe_before_reading_service_adapt = self._copy(self.datapipe)

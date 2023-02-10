@@ -35,86 +35,9 @@ __all__ = [
 ]
 
 
-class _ResetCounter:
-    exp_cnt: int
-    cnt: int
-    _reached: bool
-
-    def __init__(self, exp_cnt: int):
-        self.exp_cnt = exp_cnt
-        self.cnt = 0
-        self._reached = False
-
-    def increment(self) -> None:
-        self.cnt += 1
-        assert self.cnt <= self.exp_cnt
-
-    def is_reached(self) -> bool:
-        if self.cnt == self.exp_cnt:
-            self._reached = True
-        return self._reached
-
-    def reset(self) -> None:
-        if self._reached:
-            self._reached = False
-            self.cnt = 0
-
-
-def MultipleDataPipesToQueuesLoop(source_datapipes, req_queues, res_queues, call_on_process_init=None):
-    r"""
-    Set the appropriate pipes and protocol server type, and create a loop over multiple datapipes
-    with the protocol server in a non-blocking manner.
-    """
-    assert call_on_process_init is None, "``MultipleDataPipesToQueuesLoop`` does not support call_on_process_init"
-    num_loops = len(source_datapipes)
-    assert num_loops == len(req_queues) and num_loops == len(
-        res_queues
-    ), "``MultipleDataPipesToQueuesLoop`` requires the same number of datapipes, request queues and response queues"
-
-    torch.set_num_threads(1)
-
-    loops = []
-    reset_iterator_counter = _ResetCounter(num_loops)
-
-    for source_datapipe, req_queue, res_queue in zip(source_datapipes, req_queues, res_queues):
-        loops.append(
-            _create_datapipe_queue_loop(
-                source_datapipe,
-                req_queue,
-                res_queue,
-                blocking_request_get=False,
-                reset_iterator_counter=reset_iterator_counter,
-            )
-        )  # Non-blocking request with reset counters
-
-    # Using `zip_longest` to guarantee the process is terminated only when
-    # all loops have received `TerminateRequest`
-    for _ in zip_longest(*loops):
-        # time.sleep to make Python switch context to get/send message in mp.Queue
-        # TODO(ejguan): Microbenchmarked a synthetic non-replicable case that sleep perform similar to pass.
-        #               A more comprehensive benchmarking in real-world scneario is needed.
-        time.sleep(0)
-
-
-def DataPipeToQueuesLoop(source_datapipe, req_queue, res_queue, call_on_process_init=None):
-    r"""
-    Initialize with the given init function, set the appropriate pipe and protocol server type, and
-    create a loop with the protocol server.
-    """
+def DataPipeToQueuesLoop(source_datapipe, req_queue, res_queue, call_on_process_init=None, call_on_epoch_reset=None):
     if call_on_process_init is not None:
         call_on_process_init(source_datapipe)
-
-    torch.set_num_threads(1)
-
-    loop = _create_datapipe_queue_loop(source_datapipe, req_queue, res_queue, blocking_request_get=True)
-
-    for _ in loop:
-        pass
-
-
-def _create_datapipe_queue_loop(
-    source_datapipe, req_queue, res_queue, blocking_request_get=True, reset_iterator_counter=None
-):
     if isinstance(source_datapipe, IterDataPipe):
         pipe_type = communication.iter
         protocol_type = communication.protocol.IterDataPipeQueueProtocolServer
@@ -124,23 +47,21 @@ def _create_datapipe_queue_loop(
     else:
         raise Exception("Only supports IterDataPipe or MapDataPipe, got", source_datapipe)
 
-    return pipe_type.DataPipeBehindQueues(
+    torch.set_num_threads(1)
+    for _ in pipe_type.DataPipeBehindQueues(
         source_datapipe,
         protocol_type(req_queue, res_queue),
-        blocking_request_get=blocking_request_get,
-        reset_iterator_counter=reset_iterator_counter,
-    )
+        blocking_request_get=True,
+        reset_epoch_fn=call_on_epoch_reset,
+    ):
+        pass
 
 
-def CreateProcessForDataPipeline(multiprocessing_ctx, datapipe, call_on_process_init=None):
-    r"""
-    Given a DataPipe, creates a new process with ``DataPipeToQueuesLoop`` as target,
-    and returns ``(process, req_queue, res_queue)``.
-    """
+def SpawnProcessForDataPipeline(multiprocessing_ctx, datapipe, call_on_process_init=None, call_on_epoch_reset=None):
     req_queue = multiprocessing_ctx.Queue()
     res_queue = multiprocessing_ctx.Queue()
     process = multiprocessing_ctx.Process(
-        target=DataPipeToQueuesLoop, args=(datapipe, req_queue, res_queue, call_on_process_init)
+        target=DataPipeToQueuesLoop, args=(datapipe, req_queue, res_queue, call_on_process_init, call_on_epoch_reset)
     )
     return process, req_queue, res_queue
 

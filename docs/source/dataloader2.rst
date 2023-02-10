@@ -1,11 +1,9 @@
-:tocdepth: 3
-
 DataLoader2
-============
+================================
 
 .. automodule:: torchdata.dataloader2
 
-A new, light-weight :class:`DataLoader2` is introduced to decouple the overloaded data-manipulation functionalities from ``torch.utils.data.DataLoader`` to ``DataPipe`` operations. Besides, certain features can only be achieved with :class:`DataLoader2` like snapshotting and switching backend services to perform high-performant operations.
+A light-weight :class:`DataLoader2` is introduced to decouple the overloaded data-manipulation functionalities from ``torch.utils.data.DataLoader`` to ``DataPipe`` operations. Besides, a certain features can only be achieved with :class:`DataLoader2` like snapshotting and switching backend services to perform high-performant operations.
 
 DataLoader2
 ------------
@@ -23,7 +21,7 @@ Note:
 ReadingService
 ---------------
 
-``ReadingService`` specifies the execution backend for the data-processing graph. There are three types of ``ReadingServices`` provided in TorchData:
+``ReadingService`` specifies the execution backend for the data-processing graph. There are three types of ``ReadingServices`` in TorchData:
 
 .. autosummary::
     :nosignatures:
@@ -33,9 +31,34 @@ ReadingService
     DistributedReadingService
     MultiProcessingReadingService
     PrototypeMultiProcessingReadingService
-    SequentialReadingService
 
-Each ``ReadingServices`` would take the ``DataPipe`` graph and rewrite it to achieve a few features like dynamic sharding, sharing random seeds and snapshoting for multi-/distributed processes. For more detail about those features, please refer to `the documentation <reading_service.html>`_.
+Each ``ReadingServices`` would take the ``DataPipe`` graph and modify it to achieve a few features like dynamic sharding, sharing random seeds and snapshoting for multi-/distributed processes.
+
+This also allows easier transition of data-preprocessing pipeline from research to production. After the ``DataPipe`` graph is created and validated with the ``ReadingServices``, a different ``ReadingService`` that configures and connects to the production service/infra such as ``AIStore`` can be provided to :class:`DataLoader2` as a drop-in replacement. The ``ReadingService`` could potentially search the graph, and find ``DataPipe`` operations that can be delegated to the production service/infra, then modify the graph correspondingly to achieve higher-performant execution.
+
+The followings are interfaces for custom ``ReadingService``.
+
+.. autoclass:: ReadingServiceInterface
+    :members:
+
+The checkpoint/snapshotting feature is a work in progress. Here is the preliminary interface (small changes are likely):
+
+.. autoclass:: CheckpointableReadingServiceInterface
+    :members:
+
+And, graph utility functions are provided in ``torchdata.dataloader.graph`` to help users to define their own ``ReadingService`` and modify the graph:
+
+.. module:: torchdata.dataloader2.graph
+
+.. autosummary::
+    :nosignatures:
+    :toctree: generated/
+    :template: function.rst
+
+    traverse_dps
+    find_dps
+    replace_dp
+    remove_dp
 
 Adapter
 --------

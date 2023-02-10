@@ -26,10 +26,10 @@ class ResetIteratorResponse(Response):
 
 
 class ResetEpochRequest(Request):
-    __slots__ = "reset_fn"
+    __slots__ = "args"
 
-    def __init__(self, reset_fn):
-        self.reset_fn = reset_fn
+    def __init__(self, args):
+        self.args = args
 
 
 class ResetEpochResponse(Response):
